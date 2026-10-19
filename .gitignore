@@ -1,0 +1,27 @@
+# Build output and local development runtime
+/dist/
+/bin/
+/.dbx-dev/
+/node_modules/
+/backend/dbx-plugin-kubecontext
+/backend/dbx-plugin-kubecontext.exe
+*.dbxp
+
+# Local editor / OS state
+/.idea/
+/.vscode/
+.DS_Store
+
+# Local validation captures can contain cluster details and logs
+/artifacts/
+__pycache__/
+*.py[cod]
+
+# Local credentials and environment overrides (keep the mock example tracked)
+.env
+.env.*
+!.env.example
+/.kube/
+/kubeconfig
+/kubeconfig.yaml
+/kube-config.yaml

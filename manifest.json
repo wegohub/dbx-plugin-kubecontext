@@ -1,0 +1,311 @@
+{
+  "$schema": "https://raw.githubusercontent.com/t8y2/dbx/main/plugins/manifest.schema.json",
+  "manifest_version": 1,
+  "id": "com.example.kubecontext",
+  "name": "KubeContext",
+  "version": "0.5.1",
+  "publisher": "example",
+  "description": "Read-only Kubernetes resource browser with live logs and per-context local terminals.",
+  "icon": "assets/plugin.svg",
+  "source": "https://github.com/wegohub/dbx-plugin-kubecontext",
+  "homepage": "https://github.com/wegohub/dbx-plugin-kubecontext",
+  "engines": {
+    "dbx": ">=0.6.17",
+    "host_api": "1"
+  },
+  "permissions": [
+    "host.workbench",
+    "host.events",
+    "host.storage"
+  ],
+  "entrypoints": {
+    "backend": {
+      "executable": "bin/dbx-plugin-kubecontext"
+    },
+    "ui": {
+      "root": "ui",
+      "entry": "ui/index.html"
+    }
+  },
+  "contributions": [
+    {
+      "type": "connection-provider",
+      "id": "com.example.kubecontext.connection",
+      "label": "KubeContext",
+      "icon": "assets/plugin.svg",
+      "database_type": "kubecontext",
+      "description": "连接一个 kubeconfig 汇总文件（默认 ~/.kube/config），逐个 context 浏览集群。",
+      "workbench": "com.example.kubecontext.workbench",
+      "capabilities": [
+        "test",
+        "connect",
+        "disconnect"
+      ],
+      "fields": [
+        {
+          "key": "display_name",
+          "label": "Connection name",
+          "type": "text",
+          "binding": "name",
+          "required": true,
+          "default": "Kubernetes cluster"
+        },
+        {
+          "key": "auth_mode",
+          "label": "Authentication",
+          "type": "select",
+          "binding": "config",
+          "required": true,
+          "default": "kubeconfig",
+          "options": [
+            {
+              "label": "Kubeconfig file",
+              "value": "kubeconfig"
+            },
+            {
+              "label": "API Server + token",
+              "value": "token"
+            }
+          ]
+        },
+        {
+          "key": "kubeconfig_path",
+          "label": "Kubeconfig 文件（汇总文件）",
+          "type": "text",
+          "binding": "config",
+          "placeholder": "~/.kube/config",
+          "description": "选择含多个 context 的汇总文件，在工作台顶部下拉选择 context。",
+          "picker": {
+            "kind": "file",
+            "accept": []
+          },
+          "visible_when": {
+            "field": "auth_mode",
+            "one_of": [
+              "kubeconfig"
+            ]
+          },
+          "default": "~/.kube/config"
+        },
+        {
+          "key": "import_path",
+          "label": "导入 kubeconfig（可选）",
+          "type": "text",
+          "binding": "config",
+          "placeholder": "选择源文件，然后点击「合并导入」",
+          "description": "导入源与上面的连接配置文件分开；同名项更新，其余保留，写入前自动备份。",
+          "picker": {
+            "kind": "file",
+            "accept": [
+              ".yaml",
+              ".yml",
+              ".config",
+              ".kubeconfig"
+            ],
+            "content_field": "import_content"
+          },
+          "visible_when": {
+            "field": "auth_mode",
+            "one_of": [
+              "kubeconfig"
+            ]
+          }
+        },
+        {
+          "key": "import_content",
+          "label": "导入内容（浏览器上传）",
+          "type": "textarea",
+          "binding": "secret",
+          "visible_when": {
+            "field": "import_path",
+            "one_of": [
+              "__hidden__"
+            ]
+          }
+        },
+        {
+          "key": "server",
+          "label": "API Server",
+          "type": "text",
+          "binding": "host",
+          "placeholder": "https://10.0.0.1:6443",
+          "visible_when": {
+            "field": "auth_mode",
+            "one_of": [
+              "token"
+            ]
+          },
+          "required_when": {
+            "field": "auth_mode",
+            "one_of": [
+              "token"
+            ]
+          }
+        },
+        {
+          "key": "port",
+          "label": "Port",
+          "type": "number",
+          "binding": "port",
+          "default": 6443,
+          "visible_when": {
+            "field": "auth_mode",
+            "one_of": [
+              "token"
+            ]
+          }
+        },
+        {
+          "key": "token",
+          "label": "Bearer token",
+          "type": "password",
+          "binding": "secret",
+          "visible_when": {
+            "field": "auth_mode",
+            "one_of": [
+              "token"
+            ]
+          },
+          "required_when": {
+            "field": "auth_mode",
+            "one_of": [
+              "token"
+            ]
+          }
+        },
+        {
+          "key": "ca_cert",
+          "label": "CA certificate (PEM)",
+          "type": "textarea",
+          "binding": "secret",
+          "description": "Optional. Empty means the system trust store.",
+          "visible_when": {
+            "field": "auth_mode",
+            "one_of": [
+              "token"
+            ]
+          }
+        },
+        {
+          "key": "namespace",
+          "label": "Default namespace",
+          "type": "text",
+          "binding": "config",
+          "default": "default",
+          "visible_when": {
+            "field": "auth_mode",
+            "one_of": [
+              "token"
+            ]
+          },
+          "description": "仅用于 API Server + Token 连接；kubeconfig 连接使用所选 context 的 namespace。"
+        },
+        {
+          "key": "insecure_skip_tls_verify",
+          "label": "Skip TLS verification",
+          "type": "boolean",
+          "binding": "config",
+          "default": false
+        },
+        {
+          "key": "allow_exec",
+          "label": "Allow kubeconfig exec credentials",
+          "type": "boolean",
+          "binding": "config",
+          "default": false,
+          "description": "kubeconfig user.exec runs a local command (aws, gcloud, oidc). Off by default."
+        },
+        {
+          "key": "connect_timeout_secs",
+          "label": "Timeout (seconds)",
+          "type": "number",
+          "binding": "config",
+          "default": 15
+        }
+      ],
+      "actions": [
+        {
+          "id": "import-kubeconfig",
+          "label": "合并导入",
+          "variant": "outline",
+          "requires_valid_form": false,
+          "close_on_success": false
+        }
+      ]
+    },
+    {
+      "type": "workbench",
+      "id": "com.example.kubecontext.workbench",
+      "label": "KubeContext",
+      "icon": "assets/plugin.svg",
+      "description": "Namespaces, workloads, pods, logs and guarded mutations for one kube context."
+    }
+  ],
+  "localizations": {
+    "zh-CN": {
+      "name": "KubeContext",
+      "description": "按 kube context 只读浏览 Kubernetes 集群：命名空间、工作负载、Pod、详情与实时日志。",
+      "contributions": {
+        "com.example.kubecontext.connection": {
+          "label": "KubeContext 集群",
+          "description": "连接一个 kubeconfig 汇总文件（默认 ~/.kube/config），逐个 context 浏览集群。",
+          "fields": {
+            "display_name": {
+              "label": "连接名称"
+            },
+            "auth_mode": {
+              "label": "认证方式",
+              "options": {
+                "kubeconfig": "Kubeconfig 文件",
+                "token": "API Server + Token"
+              }
+            },
+            "kubeconfig_path": {
+              "label": "Kubeconfig 文件（汇总文件）",
+              "description": "选择含多个 context 的汇总文件，在工作台顶部下拉选择 context。"
+            },
+            "server": {
+              "label": "API Server"
+            },
+            "port": {
+              "label": "端口"
+            },
+            "token": {
+              "label": "Bearer Token"
+            },
+            "ca_cert": {
+              "label": "CA 证书 (PEM)",
+              "description": "可选，留空用系统信任库。"
+            },
+            "namespace": {
+              "label": "默认命名空间"
+            },
+            "insecure_skip_tls_verify": {
+              "label": "跳过 TLS 校验"
+            },
+            "allow_exec": {
+              "label": "允许 kubeconfig exec 凭据",
+              "description": "user.exec 会执行本地命令（aws/gcloud/oidc），默认关闭。"
+            },
+            "read_only": {
+              "label": "只读模式",
+              "description": "即使凭据允许，也禁止扩缩容、重启和删除。"
+            },
+            "connect_timeout_secs": {
+              "label": "超时（秒）"
+            }
+          },
+          "actions": {
+            "import-kubeconfig": {
+              "label": "合并导入"
+            }
+          }
+        },
+        "com.example.kubecontext.workbench": {
+          "label": "KubeContext 工作台",
+          "description": "浏览命名空间、工作负载、Pod、详情和实时日志；集群资源只读。"
+        }
+      }
+    }
+  }
+}

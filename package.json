@@ -1,0 +1,7 @@
+{
+  "name": "dbx-plugin-kubecontext",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test tests/ui.test.mjs", "test:integration": "python3 tests/integration.py" },
+  "devDependencies": { "happy-dom": "20.10.6" }
+}

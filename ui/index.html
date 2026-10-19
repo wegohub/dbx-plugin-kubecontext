@@ -1,0 +1,1351 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>KubeContext</title>
+<link rel="stylesheet" href="vendor/xterm.css" />
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<script src="controls.js"></script>
+<script src="monitor.js"></script>
+<style>
+  :root {
+    --kc-bg: var(--color-background, #ffffff);
+    --kc-bg-soft: var(--color-background-secondary, #f6f7f9);
+    --kc-text: var(--color-foreground, #1f2329);
+    --kc-text-soft: var(--color-muted-foreground, #646a73);
+    --kc-border: var(--color-border, #dfe2e8);
+    --kc-primary: var(--color-primary, #326ce5);
+    --kc-primary-text: var(--color-primary-foreground, #ffffff);
+    --kc-danger: var(--color-error, #d93025);
+    --kc-success: var(--color-success, #1a7f37);
+    --kc-warning: var(--color-warning, #b26a00);
+    --kc-hover: var(--color-hover, #f0f2f5);
+  }
+  html[data-dbx-theme="dark"], html[data-appearance="dark"] {
+    --kc-bg: var(--color-background, #17181c);
+    --kc-bg-soft: var(--color-background-secondary, #1f2126);
+    --kc-text: var(--color-foreground, #e8eaed);
+    --kc-text-soft: var(--color-muted-foreground, #9aa0a6);
+    --kc-border: var(--color-border, #2f3238);
+    --kc-hover: var(--color-hover, #24262c);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--kc-bg); color: var(--kc-text);
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+  }
+  .app { display: flex; flex-direction: column; height: 100%; position: relative; }
+  .context-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--kc-border); }
+  .context-picker { display: flex; align-items: center; gap: 8px; }
+  .source-bar { display: flex; align-items: center; gap: 12px; margin-left: 12px; min-width: 100px; max-width: 660px; flex: 1; color: var(--kc-text-soft); font-size: 11px; }
+  #kubeconfig-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #ov-title { white-space: nowrap; }
+  #context-controls { margin-left: 6px; }
+  #context-view { position: relative; }
+  .welcome { margin: auto; padding: 32px; text-align: center; max-width: 560px; }
+  .welcome strong { display: block; margin-bottom: 10px; font-size: 18px; }
+  .term-session { height: 100%; }
+
+  header.bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 9px 14px; border-bottom: 1px solid var(--kc-border); background: var(--kc-bg-soft);
+  }
+  .cluster { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .cluster strong { font-size: 13px; white-space: nowrap; }
+  .muted { color: var(--kc-text-soft); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--kc-text-soft); flex: none; }
+  .dot.ok { background: var(--kc-success); }
+  .dot.err { background: var(--kc-danger); }
+  .controls { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+
+  select, input[type="text"], input[type="search"], input[type="number"] {
+    appearance: none; -webkit-appearance: none;
+    background: var(--kc-bg); color: var(--kc-text); border: 1px solid var(--kc-border);
+    border-radius: 6px; padding: 5px 9px; min-height: 30px; font: inherit; min-width: 0;
+  }
+  input[type="text"] { width: 200px; }
+  input[type="number"] { width: 68px; }
+  select:focus, input:focus { outline: 2px solid color-mix(in srgb, var(--kc-primary) 45%, transparent); outline-offset: 1px; }
+  input[type="number"]::-webkit-inner-spin-button { appearance: none; }
+  input[type="checkbox"] { appearance: none; width: 14px; height: 14px; margin: 0 4px 0 0; border: 1px solid var(--kc-border); border-radius: 4px; background: var(--kc-bg); vertical-align: -2px; cursor: pointer; }
+  input[type="checkbox"]:checked { background: var(--kc-primary); border-color: var(--kc-primary); }
+  input[type="checkbox"]:checked::after { content: ""; display: block; width: 4px; height: 7px; margin: 1px 0 0 4px; border: solid var(--kc-primary-text); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+  button:focus-visible, [role="separator"]:focus-visible { outline: 2px solid var(--kc-primary); outline-offset: 2px; }
+  .select-shell { display: inline-flex; min-width: 115px; max-width: 100%; }
+  .select-shell[data-for="context-select"] { width: clamp(190px, 24vw, 300px); }
+  .select-shell[data-for="kind"] { width: 168px; }
+  .select-shell[data-for="namespace"] { width: 160px; }
+  .select-shell[data-for="log-container"] { min-width: 90px; }
+  .select-trigger { width: 100%; min-height: 30px; padding: 5px 30px 5px 10px; position: relative; border: 1px solid var(--kc-border); border-radius: 6px; background: var(--kc-bg); color: var(--kc-text); font: inherit; text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .select-trigger::after { content: ""; width: 6px; height: 6px; border: solid var(--kc-text-soft); border-width: 0 1.5px 1.5px 0; position: absolute; right: 11px; top: 9px; transform: rotate(45deg); }
+  .select-trigger:hover, .select-trigger[aria-expanded="true"] { background: var(--kc-hover); border-color: color-mix(in srgb, var(--kc-primary) 50%, var(--kc-border)); }
+  .select-trigger:disabled { opacity: .45; cursor: not-allowed; }
+  .select-popover { position: fixed; z-index: 30; padding: 5px; background: var(--kc-bg); color: var(--kc-text); border: 1px solid var(--kc-border); border-radius: 8px; box-shadow: 0 8px 28px #0003; min-width: 160px; }
+  .select-popover input { width: 100%; margin-bottom: 5px; }
+  .select-options { overflow: auto; max-height: 250px; }
+  .select-option { padding: 6px 28px 6px 9px; border-radius: 4px; position: relative; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .select-option[aria-selected="true"]::after { content: "✓"; position: absolute; right: 9px; color: var(--kc-primary); }
+  .select-option.highlighted { background: var(--kc-hover); }
+  .select-option[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
+  .select-empty { padding: 12px; color: var(--kc-text-soft); }
+  #list-count { color: var(--kc-text-soft); font-size: 11px; white-space: nowrap; }
+
+  button.btn {
+    background: var(--kc-bg); color: var(--kc-text); border: 1px solid var(--kc-border);
+    border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; white-space: nowrap;
+  }
+  button.btn:not(.primary):hover:not(:disabled) { background: var(--kc-hover); }
+  button.btn:disabled { opacity: .45; cursor: not-allowed; }
+  button.btn.primary { background: var(--kc-primary); border-color: var(--kc-primary); color: var(--kc-primary-text); }
+  button.btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--kc-primary) 90%, var(--kc-bg)); border-color: color-mix(in srgb, var(--kc-primary) 90%, var(--kc-bg)); }
+  button.btn.primary:active:not(:disabled) { background: color-mix(in srgb, var(--kc-primary) 82%, var(--kc-bg)); border-color: color-mix(in srgb, var(--kc-primary) 82%, var(--kc-bg)); }
+  button.btn.danger { color: var(--kc-danger); border-color: color-mix(in srgb, var(--kc-danger) 45%, var(--kc-border)); }
+  button.btn.ghost { border-color: transparent; background: transparent; }
+  button.btn.small { padding: 3px 8px; font-size: 12px; }
+
+  .banner {
+    margin: 8px 14px 0; padding: 7px 12px; border-radius: 6px; font-size: 12px;
+    background: color-mix(in srgb, var(--kc-warning) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--kc-warning) 35%, transparent);
+  }
+  .banner.error { background: color-mix(in srgb, var(--kc-danger) 12%, transparent); border-color: color-mix(in srgb, var(--kc-danger) 40%, transparent); color: var(--kc-danger); }
+
+  main { display: flex; flex: 1; min-height: 0; }
+  #overview { flex-direction: column; overflow: auto; padding: 0 0 20px; }
+  .ov-head {
+    display: flex; align-items: flex-end; gap: 12px; padding: 16px 16px 10px;
+  }
+  .ov-title { font-size: 15px; font-weight: 600; }
+  .ov-actions { margin-left: auto; }
+
+  table { width: 100%; border-collapse: collapse; }
+  td.data { max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  td.numeric { font-variant-numeric: tabular-nums; }
+  #resource-table td.name { min-width: 250px; max-width: 420px; }
+  thead th {
+    position: sticky; top: 0; z-index: 1; text-align: left; font-weight: 600; font-size: 12px;
+    background: var(--kc-bg-soft); color: var(--kc-text-soft);
+    padding: 8px 12px; border-bottom: 1px solid var(--kc-border); white-space: nowrap;
+  }
+  tbody td { padding: 7px 12px; border-bottom: 1px solid var(--kc-border); vertical-align: top; }
+  #context-view tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--kc-hover); }
+  tbody tr.active { background: color-mix(in srgb, var(--kc-primary) 12%, transparent); }
+  td.name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #context-view td.name { min-width: 210px; color: var(--kc-text); }
+  td.detail { color: var(--kc-text-soft); max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--kc-border); white-space: nowrap; }
+  .pill.ok { color: var(--kc-success); border-color: color-mix(in srgb, var(--kc-success) 45%, transparent); }
+  .pill.warn { color: var(--kc-warning); border-color: color-mix(in srgb, var(--kc-warning) 45%, transparent); }
+  .pill.err { color: var(--kc-danger); border-color: color-mix(in srgb, var(--kc-danger) 45%, transparent); }
+  .empty { padding: 40px 16px; text-align: center; color: var(--kc-text-soft); }
+
+  .table-wrap { flex: 1; overflow: auto; min-width: 0; }
+  aside.detail {
+    position: relative; flex-shrink: 0; width: 52%; min-width: 0; border-left: 1px solid var(--kc-border);
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  .detail-resizer { position: absolute; z-index: 4; left: -5px; top: 0; bottom: 0; width: 10px; cursor: col-resize; touch-action: none; }
+  .detail-resizer:hover::after, .detail-resizer:focus-visible::after, body.resizing .detail-resizer::after { content: ""; position: absolute; inset: 0 3px; background: var(--kc-primary); opacity: .65; }
+  body.resizing { user-select: none; cursor: col-resize; }
+  .detail-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--kc-border); }
+  .detail-head .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 10px 0; align-items: center; }
+  .tab {
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    color: var(--kc-text-soft); font: inherit; padding: 6px 8px; cursor: pointer;
+  }
+  .tab.active { color: var(--kc-text); border-bottom-color: var(--kc-primary); }
+  .tab:disabled { opacity: .4; cursor: not-allowed; }
+  .log-tools { width: 100%; padding-bottom: 6px; flex-wrap: wrap; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--kc-text-soft); }
+  .pane { flex: 1; overflow: auto; margin: 0; padding: 10px 12px; }
+  pre {
+    margin: 0; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .actions { display: flex; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--kc-border); flex-wrap: wrap; }
+
+  .terminal {
+    border-top: 1px solid var(--kc-border); background: var(--kc-bg-soft);
+    display: flex; flex-direction: column; height: 42%; min-height: 120px;
+  }
+  .term-head { display: flex; align-items: center; gap: 10px; padding: 6px 12px; font-size: 12px; border-bottom: 1px solid var(--kc-border); }
+  .term-head .right { margin-left: auto; display: flex; gap: 6px; }
+  .term-out { flex: 1; overflow: auto; margin: 0; padding: 8px 12px; }
+  .term-input { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--kc-border); }
+  .term-input .prompt { color: var(--kc-primary); font-family: ui-monospace, monospace; }
+  .term-input input { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  .overlay {
+    position: absolute; inset: 0; z-index: 8; display: flex; align-items: center; justify-content: center;
+    background: color-mix(in srgb, var(--kc-bg) 80%, transparent);
+  }
+  .overlay .box {
+    width: min(520px, 88%); padding: 24px 22px; border-radius: 12px; text-align: center;
+    border: 2px dashed var(--kc-border); background: var(--kc-bg-soft); position: relative;
+  }
+  .overlay.active .box { border-color: var(--kc-primary); background: color-mix(in srgb, var(--kc-primary) 10%, var(--kc-bg-soft)); }
+  .overlay .close { position: absolute; top: 8px; right: 10px; }
+  .dz-icon { font-size: 26px; line-height: 1; color: var(--kc-primary); margin-bottom: 8px; }
+  .dz-title { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
+  .dz-hint { font-size: 12px; color: var(--kc-text-soft); margin-top: 10px; line-height: 1.7; }
+  .term-screen { flex: 1; min-height: 0; padding: 8px 12px; background: #171b23; overflow: hidden; }
+  .tabs + .log-tools { padding: 8px 12px; }
+  .pane { tab-size: 2; }
+  .table-wrap { flex-basis: 48%; }
+  .detail.hidden + * { display: none; }
+  .box input { width: 100%; margin: 12px 0; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .overlay .modal-box { border: 1px solid var(--kc-border); text-align: left; box-shadow: 0 16px 48px #0003; }
+  .kc-tooltip { position:fixed; z-index:100; max-width:min(640px, calc(100vw - 16px)); padding:8px 11px; border:1px solid var(--kc-border); border-radius:7px; background:var(--kc-bg-soft); color:var(--kc-text); box-shadow:0 5px 20px #0004; white-space:pre-wrap; overflow-wrap:anywhere; pointer-events:none; font-size:12px; }
+  #resource-table { width:max-content; min-width:100%; }
+  #resource-table td.name { position:sticky; left:0; z-index:1; background:var(--kc-bg); max-width:300px; }
+  #resource-table th:first-child {left:0;z-index:3;}
+  #resource-table .operation { position:sticky; right:0; z-index:1; background:var(--kc-bg); box-shadow:-3px 0 5px #0001; min-width:76px; }
+  #resource-table th.operation {z-index:3;background:var(--kc-bg-soft);}
+  #resource-table tr.active td.name, #resource-table tr.active .operation {background:var(--kc-bg-soft);}
+  #monitor {flex:1;overflow:auto;padding:12px;min-height:0;}
+  .monitor-toolbar {display:flex;align-items:center;gap:8px;}
+  .monitor-status {font-size:11px;padding:9px 0;}
+  .metric-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+  .metric-card {border:1px solid var(--kc-border);border-radius:9px;padding:12px;min-width:0;}
+  .metric-label {font-size:12px;color:var(--kc-text-soft);}
+  .metric-value {display:block;font-size:20px;font-weight:600;margin:5px 0;font-variant-numeric:tabular-nums;}
+  .metric-budget,.metric-source {font-size:11px;overflow-wrap:anywhere;}
+  .metric-card svg {width:100%;height:108px;overflow:visible;}
+  .metric-card svg text {fill:var(--kc-text-soft);font-size:9px;}
+  .chart-axis {stroke:var(--kc-border);fill:none;}
+  .chart-series {stroke:var(--kc-primary);fill:none;stroke-width:2;}
+  circle.chart-series {fill:var(--kc-primary);stroke:none;}
+  .chart-series.series-1 {stroke:var(--kc-success);}
+  circle.series-1 {fill:var(--kc-success);}
+  .metric-meter {height:3px;background:var(--kc-border);margin:7px 0 0;border-radius:2px;overflow:hidden;}
+  .metric-meter i {display:block;height:100%;background:var(--kc-primary);}
+  .monitor-warnings {font-size:11px;margin:12px 0;overflow-wrap:anywhere;}
+  .metric-warning {color:var(--kc-warning);padding:5px 0;}
+  .monitor-containers {overflow:auto;font-size:11px;}
+  .monitor-containers table {margin:8px 0 16px;}
+  .monitor-containers th,.monitor-containers td {padding:7px;white-space:nowrap;}
+  .term-tabs {display:flex;gap:4px;overflow-x:auto;min-width:0;flex:1;}
+  .term-tab {display:flex;align-items:center;gap:5px;border:1px solid var(--kc-border);border-radius:5px;background:var(--kc-bg);color:var(--kc-text-soft);padding:3px 6px;max-width:300px;}
+  .term-tab[aria-selected="true"] {border-color:var(--kc-primary);color:var(--kc-text);}
+  .term-tab-label {background:none;border:0;color:inherit;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;}
+  .term-tab-close {background:none;border:0;color:inherit;cursor:pointer;}
+  #exec-dialog label {display:flex;justify-content:space-between;align-items:center;margin:12px 0;gap:10px;}
+  #exec-title {overflow-wrap:anywhere;}
+  @container (max-width:480px) {.metric-grid{grid-template-columns:1fr;}}
+  #detail {container-type:inline-size;}
+  @media (max-width: 760px) { aside.detail { position: absolute; inset: 0 0 0 auto; width: 85%; max-width: 100%; min-width: 280px; background: var(--kc-bg); z-index: 2; box-shadow: -8px 0 24px #0002; } .cluster { flex-wrap: wrap; } #context-controls { margin-left: 0; } }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="cluster">
+      <span class="dot" id="dot"></span>
+      <strong id="title">KubeContext</strong>
+      <span class="muted" id="subtitle"></span>
+      <span class="pill ok" id="readonly-pill">资源只读</span>
+    </div>
+    <div class="source-bar"><span id="kubeconfig-path"></span><span id="ov-title"></span></div>
+  </header>
+
+  <div class="context-toolbar">
+    <label class="context-picker">Context <select id="context-select" aria-label="Context" title="选择 context，同时更新 kubectl 默认 context"></select></label>
+    <button class="btn" id="ov-import">＋ 添加 context</button>
+    <button class="btn ghost small" id="ov-refresh" title="重新读取连接的 kubeconfig 文件">刷新 context</button>
+    <div class="controls hidden" id="context-controls">
+      <select id="namespace" title="命名空间"></select>
+      <select id="kind" title="资源类型"></select>
+      <input id="search" type="text" placeholder="过滤名称、节点、IP、镜像…" autocomplete="off" spellcheck="false" />
+      <button class="btn" id="terminal-btn">终端</button>
+      <button class="btn" id="refresh">刷新</button>
+      <span id="list-count"></span>
+    </div>
+  </div>
+
+  <div class="banner hidden" id="banner"></div>
+
+  <main id="overview" class="hidden">
+    <div class="welcome">
+      <strong id="welcome-title">选择一个 context</strong>
+      <div class="muted" id="welcome-hint">在上方选择 context，即可浏览资源、查看实时日志和使用本地终端。选择后也会更新连接配置文件中的 kubectl 默认 context。</div>
+      <p class="muted" id="ctx-empty">需要添加集群？点击「添加 context」，或直接把 kube-config.yaml 拖入工作台。</p>
+    </div>
+  </main>
+
+  <main id="context-view" class="hidden">
+    <section class="table-wrap">
+      <table id="resource-table">
+        <thead><tr id="resource-columns"></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="empty hidden" id="empty">没有资源</div>
+    </section>
+
+    <aside class="detail hidden" id="detail">
+      <div class="detail-resizer" id="detail-resizer" role="separator" aria-label="调整详情宽度" aria-orientation="vertical" tabindex="0" title="拖动调整宽度；方向键微调；双击重置"></div>
+      <div class="detail-head">
+        <span class="title" id="detail-title">详情</span>
+        <button class="btn ghost small" id="close-detail" style="margin-left:auto">关闭</button>
+      </div>
+      <div class="tabs">
+        <button class="tab active" data-tab="detail">详情</button>
+        <button class="tab" data-tab="logs" id="tab-logs" disabled>日志</button>
+        <button class="tab" data-tab="monitor" id="tab-monitor" disabled>监控</button>
+        <button class="tab" data-tab="events">事件</button>
+        <button class="tab" data-tab="permissions">权限</button>
+        <span class="log-tools hidden" id="log-tools">
+          <span id="log-state">已停止</span>
+          <label>保留 <input id="max-lines" type="number" min="1" max="5000" step="1" value="100" /> 行</label>
+          <select id="log-container" title="容器"></select>
+          <label><input type="checkbox" id="log-timestamps" /> 时间戳</label>
+          <label><input type="checkbox" id="log-follow" checked /> 滚动跟随</label>
+          <button class="btn ghost small" id="log-pause">暂停</button>
+          <button class="btn ghost small" id="log-clear">清空</button>
+          <button class="btn ghost small" id="log-restart">重连</button>
+        </span>
+      </div>
+      <section id="monitor" class="hidden" aria-label="Pod 实时监控"></section>
+      <pre class="pane" id="pane">选中左侧一行查看详情</pre>
+      <div class="actions" id="actions"></div>
+    </aside>
+  </main>
+
+  <section class="terminal hidden" id="terminal">
+    <div class="term-head">
+      <span id="term-context" class="muted"></span>
+      <div id="terminal-tabs" class="term-tabs" role="tablist" aria-label="终端标签"></div>
+      <button class="btn ghost small" id="term-new" title="新建本地终端">＋ 本地</button>
+      <span class="right">
+        <button class="btn ghost small" id="term-clear">清空</button>
+        <button class="btn ghost small" id="term-restart">重启终端</button>
+        <button class="btn ghost small" id="term-close">收起</button>
+      </span>
+    </div>
+    <div id="term-screen" class="term-screen"></div>
+  </section>
+
+  <section class="overlay hidden" id="dropzone" role="dialog" aria-modal="true" aria-labelledby="dz-title">
+    <div class="box">
+      <button class="btn ghost small close" id="dz-close">关闭</button>
+      <div class="dz-icon">⇩</div>
+      <div class="dz-title" id="dz-title">把 kube-config.yaml 拖到这里</div>
+      <div><button class="btn primary" id="dz-pick">选择文件</button></div>
+      <div class="dz-hint">
+        内容会<strong>合并进这个连接的 kubeconfig 文件</strong>（默认 ~/.kube/config），同名 cluster/context/user 会被覆盖，原文件自动备份。<br />
+        合并后本地 <code>kubectl</code> 也能直接用。
+      </div>
+    </div>
+  </section>
+
+  <section class="overlay hidden" id="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <form class="box modal-box" id="confirm-form">
+      <button type="button" class="btn ghost small close" id="confirm-close" aria-label="关闭">×</button>
+      <strong id="confirm-title">确认操作</strong>
+      <div id="confirm-message" style="margin-top:12px"></div>
+      <input id="confirm-input" type="number" min="0" max="10000" class="hidden" aria-label="副本数" />
+      <div class="modal-actions"><button type="button" class="btn" id="confirm-cancel">取消</button><button type="submit" class="btn primary">确认</button></div>
+    </form>
+  </section>
+  <section class="overlay hidden" id="exec-dialog" role="dialog" aria-modal="true" aria-labelledby="exec-title">
+    <form class="box modal-box" id="exec-form">
+      <button type="button" class="btn ghost small close" id="exec-close" aria-label="关闭容器选择">×</button>
+      <strong id="exec-title">进入容器</strong>
+      <label>容器 <select id="exec-container" aria-label="进入的容器"></select></label>
+      <label>Shell <select id="exec-shell" aria-label="容器 Shell"><option value="/bin/sh">sh</option><option value="/bin/bash">bash</option></select></label>
+      <div class="muted" style="font-size:12px">在新标签中打开交互终端；镜像需要包含所选 Shell。</div>
+      <div class="modal-actions"><button type="button" class="btn" id="exec-cancel">取消</button><button type="submit" class="btn primary">进入</button></div>
+    </form>
+  </section>
+  <input type="file" id="file-input" accept=".yaml,.yml,.conf,.config,.kubeconfig,text/yaml,application/x-yaml" hidden />
+</div>
+
+<script type="module">
+  const dbx = window.dbxPlugin;
+  const $ = (id) => document.getElementById(id);
+  const KINDS = [
+    ["pods", "Pods"], ["deployments", "Deployments"], ["statefulsets", "StatefulSets"],
+    ["daemonsets", "DaemonSets"], ["replicasets", "ReplicaSets"], ["jobs", "Jobs"],
+    ["cronjobs", "CronJobs"], ["services", "Services"], ["ingresses", "Ingresses"],
+    ["configmaps", "ConfigMaps"], ["secrets", "Secrets"], ["serviceaccounts", "ServiceAccounts"],
+    ["persistentvolumeclaims", "PVCs"], ["events", "Events"], ["nodes", "Nodes"],
+    ["namespaces", "Namespaces"], ["storageclasses", "StorageClasses"],
+  ];
+  const CLUSTER_SCOPED = new Set(["nodes", "namespaces", "storageclasses"]);
+
+  const state = {
+    mode: "overview",
+    connectionId: "",
+    contextName: "",
+    namespace: "",
+    kind: "pods",
+    rows: [],
+    selected: null,
+    tab: "detail",
+    perm: null,
+    readOnly: false,
+    contexts: [],
+    loading: false,
+    listRevision: 0,
+    emptyMessage: "",
+    logStream: null,
+    logLive: false,
+    logLines: [],
+    maxLogLines: 100,
+    termLines: [],
+    viewRevision: 0,
+    logRevision: 0,
+    termStream: null,
+    termHistory: [],
+    termIndex: 0,
+    contextRevision: 0,
+    contextsRevision: 0,
+    permissionRevision: 0,
+    pendingContext: "",
+    currentContextName: "",
+  };
+
+  const labelFor = (kind) => (KINDS.find(([value]) => value === kind) || [kind, kind])[1];
+  const flag = (value) => (value ? "yes" : "no ");
+
+  function showBanner(message, isError = false) {
+    const banner = $("banner");
+    banner.textContent = message;
+    banner.classList.toggle("error", isError);
+    banner.classList.toggle("hidden", !message);
+  }
+
+  function setStatus(message, tone = "") {
+    $("dot").className = "dot" + (tone ? " " + tone : "");
+    $("subtitle").textContent = message;
+  }
+
+  function applyTheme(theme) {
+    if (!theme) return;
+    const root = document.documentElement;
+    root.dataset.appearance = theme.appearance || "light";
+    root.dataset.dbxTheme = theme.appearance || "light";
+    for (const [key, value] of Object.entries(theme.tokens || {})) {
+      if (typeof value !== "string") continue;
+      root.style.setProperty(key.startsWith("--") ? key : "--" + key, value);
+    }
+  }
+
+  async function invoke(method, params) {
+    if (!dbx) throw new Error("没有 DBX 宿主环境");
+    return dbx.invoke(method, { ...baseParams(), ...params });
+  }
+
+  const baseParams = () => ({ connectionId: state.connectionId, context: state.contextName });
+
+  let drawer;
+  let previousFocus;
+  let settleDialog;
+  function showOverlay(id, visible) {
+    if (visible) { window.KubeControls.closeSelects(); previousFocus = document.activeElement; }
+    $(id).classList.toggle("hidden", !visible);
+    if (visible) $(id).querySelector("button")?.focus();
+    else previousFocus?.focus?.();
+  }
+  function ask(question, value) {
+    return new Promise((resolve) => {
+      settleDialog?.(null);
+      $("confirm-message").textContent = question;
+      $("confirm-input").classList.toggle("hidden", value === undefined);
+      $("confirm-input").value = value ?? "";
+      settleDialog = (answer) => { settleDialog = null; showOverlay("confirm-dialog", false); resolve(answer); };
+      showOverlay("confirm-dialog", true);
+      if (value !== undefined) $("confirm-input").focus();
+    });
+  }
+
+  // ---------------- connection-owned context selector ----------------
+  let activationQueue = Promise.resolve();
+  async function loadContexts() {
+    const revision = ++state.contextsRevision;
+    const result = await invoke("kube/contexts", { connectionId: state.connectionId });
+    if (revision !== state.contextsRevision) return result;
+    state.contexts = result.contexts || [];
+    state.currentContextName = result.current || "";
+    $("ov-import").disabled = result.authMode === "token";
+    $("kubeconfig-path").textContent = result.path ? "kubeconfig: " + result.path : "API Server + Token";
+    $("kubeconfig-path").title = result.path || "";
+    $("ov-title").textContent = state.contexts.length + " 个 context";
+    renderContexts();
+    return result;
+  }
+
+  function renderContexts() {
+    const select = $("context-select");
+    select.replaceChildren();
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = state.contexts.length ? "选择 context…" : "暂无 context";
+    placeholder.disabled = true;
+    select.append(placeholder);
+    for (const context of state.contexts) {
+      const option = document.createElement("option");
+      option.value = context.name;
+      option.textContent = context.name + (context.name === state.currentContextName ? " · kubectl 默认" : "");
+      option.title = [context.server, context.namespace || "default", context.needsExec ? "exec 凭据" : ""].filter(Boolean).join(" · ");
+      select.append(option);
+    }
+    select.value = state.pendingContext || state.contextName;
+    select.disabled = !state.contexts.length;
+    $("welcome-title").textContent = state.contexts.length ? "选择一个 context" : "还没有 context";
+  }
+
+  function setContextBusy(busy) {
+    state.switchingContext = busy;
+    for (const element of $("context-controls").querySelectorAll("select, input, button")) element.disabled = busy;
+    $("refresh").disabled = busy || state.loading;
+  }
+
+  function clearResourceView() {
+    monitor.stop();closeExec();
+    ++state.viewRevision;
+    ++state.listRevision;
+    ++state.permissionRevision;
+    state.loading = false;
+    state.rows = [];
+    state.selected = null;
+    state.perm = null;
+    state.namespace = "";
+    state.logLines = [];
+    state.emptyMessage = "";
+    state.tab = "detail";
+    $("rows").replaceChildren();
+    $("list-count").textContent = "";
+    $("namespace").replaceChildren();
+    $("detail").classList.add("hidden");
+
+    $("log-tools").classList.add("hidden");
+    $("log-container").replaceChildren();
+    $("actions").replaceChildren();
+    $("pane").textContent = "选中一行查看详情";
+    $("search").value = "";
+    for (const button of document.querySelectorAll(".tab")) button.classList.toggle("active", button.dataset.tab === "detail");
+  }
+
+  async function enterContext(name) {
+    if (!name || !state.contexts.some((item) => item.name === name)) return;
+    if (state.contextName === name && !state.switchingContext) return;
+    const revision = ++state.contextRevision;
+    state.pendingContext = name;
+    setContextBusy(true);
+    const stoppingLogs = stopLogs(); // Captures the old stream before changing context.
+    clearResourceView();
+    $("terminal").classList.add("hidden");
+    $("overview").classList.add("hidden");
+    $("context-view").classList.remove("hidden");
+    $("context-controls").classList.remove("hidden");
+    $("title").textContent = name;
+    setStatus("正在连接…");
+    showBanner("正在切换到 context " + name + " …");
+    renderContexts();
+    try {
+      // Serialize writes; rapid selections leave the last selected context as kubectl's default.
+      const activation = activationQueue.catch(() => {}).then(async () => {
+        if (revision !== state.contextRevision) return;
+        await invoke("kube/use-context", { context: name });
+      });
+      activationQueue = activation;
+      await Promise.all([activation, stoppingLogs]);
+      if (revision !== state.contextRevision) return;
+      state.contextName = name;
+      state.currentContextName = name;
+      state.pendingContext = "";
+      state.mode = "context";
+      renderContexts();
+      syncTerminalPanel();
+      await showContextMode(revision);
+    } catch (error) {
+      if (revision !== state.contextRevision) return;
+      state.pendingContext = "";
+      state.contextName = "";
+      state.mode = "overview";
+      $("title").textContent = "KubeContext";
+      $("overview").classList.remove("hidden");
+      $("context-view").classList.add("hidden");
+      $("context-controls").classList.add("hidden");
+      renderContexts();
+      showBanner(error.message || String(error), true);
+      setStatus("连接失败", "err");
+    } finally {
+      if (revision === state.contextRevision) setContextBusy(false);
+    }
+  }
+
+  async function showOverviewMode() {
+    state.mode = "overview";
+    $("overview").classList.remove("hidden");
+    $("context-view").classList.add("hidden");
+    $("context-controls").classList.add("hidden");
+    $("terminal").classList.add("hidden");
+    setStatus("选择 context");
+    try {
+      await loadContexts();
+      showBanner("");
+    } catch (error) {
+      state.contexts = [];
+      renderContexts();
+      $("welcome-title").textContent = "无法读取 kubeconfig";
+      showBanner((error.message || String(error)) + "。可点击「添加 context」选择配置文件。", true);
+    }
+  }
+
+  async function showContextMode(revision) {
+    try {
+      const overview = await loadOverview(revision);
+      if (revision !== state.contextRevision || !overview) return;
+      if (dbx.setTitle) dbx.setTitle(state.contextName).catch(() => {});
+      await loadPermissions();
+      if (revision !== state.contextRevision) return;
+      await loadList();
+    } catch (error) {
+      if (revision !== state.contextRevision) return;
+      showBanner(error.message || String(error), true);
+      setStatus("连接失败", "err");
+    }
+  }
+
+  function fillNamespaces(namespaces, selectedNamespace) {
+    const select = $("namespace");
+    select.textContent = "";
+    const add = (value, label) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      select.append(option);
+    };
+    // Restricted credentials may not list namespaces, or the list may be
+    // truncated. Always retain the context's namespace as a concrete option.
+    for (const name of [...new Set([selectedNamespace, ...namespaces].filter(Boolean))]) add(name, name);
+    add("*", "全部命名空间");
+    select.value = selectedNamespace;
+  }
+
+  async function loadOverview(revision = state.contextRevision) {
+    const overview = await invoke("kube/overview", baseParams());
+    if (revision !== state.contextRevision) return null;
+    state.readOnly = true;
+    const version = (overview.version && overview.version.gitVersion) || "?";
+    const nodes = overview.nodes ? `${overview.nodes.ready}/${overview.nodes.total} nodes` : "";
+    setStatus([overview.name, version, nodes].filter(Boolean).join(" · "), "ok");
+    state.namespace = overview.namespace || state.contexts.find((item) => item.name === state.contextName)?.namespace || "default";
+    fillNamespaces(overview.namespaces || [], state.namespace);
+    return overview;
+  }
+
+  async function loadList() {
+    const revision = ++state.listRevision;
+    state.loading = true;
+    $("refresh").disabled = true;
+    try {
+      const result = await invoke("kube/list", {
+        ...baseParams(),
+        kind: state.kind,
+        namespace: state.namespace,
+      });
+      if (revision !== state.listRevision) return;
+      state.rows = result.rows || [];
+      state.emptyMessage = "";
+      showBanner("");
+      renderRows();
+      if (state.kind === "pods") loadPodUsage(revision);
+    } catch (error) {
+      if (revision !== state.listRevision) return;
+      state.rows = [];
+      if (error && error.code === -32003) {
+        state.emptyMessage = "当前凭据没有权限读取该资源或命名空间（RBAC 403）。打开「权限」标签查看能做什么。";
+        showBanner("");
+      } else {
+        state.emptyMessage = "";
+        showBanner(error.message || String(error), true);
+      }
+      renderRows();
+    } finally {
+      if (revision === state.listRevision) { state.loading = false; $("refresh").disabled = Boolean(state.switchingContext); }
+    }
+  }
+
+  async function loadPodUsage(revision) {
+    const rows=state.rows;
+    try {
+      const result=await invoke("kube/pod-usage",{namespace:state.namespace});
+      if(revision!==state.listRevision||rows!==state.rows)return;
+      for(const row of rows) {
+        const usage=(result.rows||[]).find(item=>item.name===row.name&&item.namespace===row.namespace);
+        row.usage=usage;row.usageError=usage?'采样时间：'+(usage.timestamp||'未知'):'未返回用量，Pod 可能尚未采样或已结束';
+      }
+    } catch(error) {
+      if(revision!==state.listRevision||rows!==state.rows)return;
+      for(const row of rows)row.usageError=error.message||String(error);
+    }
+    renderRows();
+  }
+
+  function statusTone(status) {
+    const value = (status || "").toLowerCase();
+    if (["crashloop", "imagepull", "oomkilled", "error"].some((reason) => value.includes(reason))) return "err";
+    if (value.startsWith("init:")) return "warn";
+    if (["running", "ready", "active", "complete", "succeeded", "normal", "bound"].includes(value) || value.startsWith("scheduled")) return "ok";
+    if (["pending", "progressing", "suspended", "warning", "terminating"].includes(value)) return "warn";
+    if (["failed", "error", "crashloopbackoff", "notready", "lost"].includes(value)) return "err";
+    return "";
+  }
+
+  const BASE_COLUMNS = [["name","名称"],["status","状态"],["ready","就绪"],["detail","详情"],["age","存活"]];
+  const TABLE_COLUMNS = {
+    pods: [["name","名称"],["status","状态"],["ready","就绪"],["fields.restarts","重启"],["cpuUsage","CPU 用量"],["fields.cpuRequest","CPU Request"],["fields.cpuLimit","CPU Limit"],["memoryUsage","内存用量"],["fields.memoryRequest","内存 Request"],["fields.memoryLimit","内存 Limit"],["fields.node","节点"],["fields.podIP","Pod IP"],["fields.owner","所属对象"],["fields.images","镜像"],["age","存活"],["operation","操作"]],
+    services: [["name","名称"],["status","类型"],["fields.clusterIP","Cluster IP"],["fields.externalIPs","外部地址"],["fields.ports","端口"],["fields.selector","选择器"],["age","存活"]],
+    nodes: [["name","名称"],["status","状态"],["ready","角色"],["fields.internalIP","节点 IP"],["fields.cpu","可分配 CPU"],["fields.memory","可分配内存"],["detail","Kubelet"],["fields.os","系统"],["fields.runtime","运行时"],["age","存活"]],
+    persistentvolumeclaims: [["name","名称"],["status","状态"],["ready","容量"],["detail","StorageClass"],["fields.accessModes","访问模式"],["fields.volume","绑定卷"],["age","存活"]],
+  };
+  const WORKLOAD_COLUMNS = [["name","名称"],["status","状态"],["ready","就绪"],["fields.updated","已更新"],["fields.available","可用"],["fields.images","镜像"],["fields.selector","选择器"],["age","存活"]];
+  for (const kind of ["deployments","statefulsets","replicasets","daemonsets"]) TABLE_COLUMNS[kind] = WORKLOAD_COLUMNS;
+  const rowValue = (row,key) => key.startsWith("fields.") ? row.fields?.[key.slice(7)] : row[key];
+  function renderRows() {
+    const filter = ($("search").value || "").trim().toLowerCase();
+    const visible = state.rows.filter((row) => !filter || [row.name,row.namespace,row.detail,...Object.values(row.fields || {})].join(" ").toLowerCase().includes(filter));
+    const columns = [...(TABLE_COLUMNS[state.kind] || BASE_COLUMNS)];
+    if (state.namespace === "*" && !CLUSTER_SCOPED.has(state.kind)) columns.splice(1,0,["namespace","命名空间"]);
+    $("resource-columns").replaceChildren(...columns.map(([,label]) => { const th=document.createElement("th"); th.textContent=label; if(label==="操作")th.className="operation"; return th; }));
+    const body = $("rows"); body.replaceChildren();
+    for (const row of visible) {
+      const tr = document.createElement("tr");
+      if (state.selected && state.selected.name === row.name && state.selected.namespace === row.namespace) tr.className = "active";
+      for (const [key] of columns) {
+        const td = document.createElement("td");
+        const value=key==="cpuUsage"?window.KubeMonitor.cpu(row.usage?.cpuMillicores):key==="memoryUsage"?window.KubeMonitor.bytes(row.usage?.memoryBytes):String(rowValue(row,key) ?? "");
+        td.className = key === "name" ? "name" : "data";
+        td.title = key === "age" ? row.createdAt || value : value;
+        if (key === "name") td.title = row.namespace ? `${row.namespace}/${row.name}` : row.name;
+        td.dataset.tooltip = ["cpuUsage","memoryUsage"].includes(key) ? value+" · "+(row.usageError||"正在读取用量…") : td.title;
+        if(key === "operation") {
+          td.className="operation";const button=document.createElement("button");button.className="btn small";button.textContent="进入";
+          button.disabled=["Succeeded","Failed","Terminating"].includes(row.status);
+          td.dataset.tooltip=button.disabled?"Pod 已结束或正在删除，无法进入容器":"选择容器并在新终端标签中打开";
+          button.addEventListener("click",event=>{event.stopPropagation();enterPod(row);});td.append(button);
+        } else if (key === "status") {
+          const pill = document.createElement("span"); pill.className = "pill " + statusTone(value); pill.textContent = value || "-";
+          pill.title = row.fields?.reason || value; td.append(pill);
+        } else {
+          td.textContent = value || "—";
+          if (["fields.restarts","fields.updated","fields.available","ready"].includes(key)) td.classList.add("numeric");
+        }
+        tr.append(td);
+      }
+      tr.addEventListener("click", () => selectRow(row)); body.append(tr);
+    }
+    $("list-count").textContent = filter ? `${visible.length} / ${state.rows.length} 项` : `${state.rows.length} 项`;
+    $("empty").classList.toggle("hidden", visible.length > 0);
+    $("empty").textContent = filter && state.rows.length ? "没有匹配的资源" : state.emptyMessage || "当前命名空间没有这类资源";
+  }
+
+  // ---------------- RBAC gating ----------------
+  function kindPermission(kind) {
+    if (!state.perm) return null;
+    if (state.perm.kinds && state.perm.kinds[kind]) return state.perm.kinds[kind];
+    if (CLUSTER_SCOPED.has(kind)) {
+      return { list: (state.perm.cluster || {})[kind] !== false, mutate: false };
+    }
+    return null;
+  }
+  const canListKind = (kind) => {
+    const entry = kindPermission(kind);
+    return entry ? entry.list !== false : true;
+  };
+  const canMutateKind = (kind) => {
+    const entry = kindPermission(kind);
+    return entry ? entry.mutate === true : true;
+  };
+  const canReadLogs = () => {
+    const entry = state.perm && state.perm.kinds && state.perm.kinds.pods;
+    return !entry || entry.log !== false;
+  };
+
+  async function loadPermissions() {
+    const revision = ++state.permissionRevision;
+    const contextRevision = state.contextRevision;
+    try {
+      const perm = await invoke("kube/permissions", { namespace: state.namespace });
+      if (revision !== state.permissionRevision || contextRevision !== state.contextRevision) return;
+      state.perm = perm;
+    } catch (error) {
+      if (revision !== state.permissionRevision || contextRevision !== state.contextRevision) return;
+      state.perm = null;
+    }
+    applyPermissionGating();
+    return state.perm;
+  }
+
+  function applyPermissionGating() {
+    const kindSelect = $("kind");
+    for (const option of kindSelect.options) {
+      const allowed = canListKind(option.value);
+      option.disabled = !allowed;
+      option.textContent = labelFor(option.value) + (allowed ? "" : "（无权限）");
+    }
+    const allOption = [...$("namespace").options].find((option) => option.value === "*");
+    if (allOption) {
+      const allowed = !state.perm || (state.perm.cluster || {}).allNamespaces !== false;
+      allOption.disabled = !allowed;
+      allOption.textContent = allowed ? "全部命名空间" : "全部命名空间（无权限）";
+    }
+    if (!canListKind(state.kind)) {
+      const fallback = KINDS.map(([value]) => value).find((value) => canListKind(value));
+      if (fallback) {
+        state.kind = fallback;
+        kindSelect.value = fallback;
+      }
+    }
+    renderActions();
+  }
+
+  function formatRules(perm) {
+    if (!perm || !perm.rules || !perm.rules.length) return "（没有返回命名空间规则）";
+    return perm.rules
+      .map((rule) => {
+        const groups = rule.apiGroups && rule.apiGroups.length ? rule.apiGroups.join(",") : "core";
+        return `${(rule.verbs || []).join(",").padEnd(30)} ${groups.padEnd(16)} ${(rule.resources || []).join(",")}`;
+      })
+      .join("\n");
+  }
+
+  function formatPermissions() {
+    const perm = state.perm;
+    if (!perm) return "读取权限失败：该凭据可能没有 SelfSubjectRulesReview 权限。";
+    const identity = perm.identity || {};
+    const cluster = perm.cluster || {};
+    const lines = [
+      `身份        : ${identity.username || "未知"}`,
+      `Groups      : ${(identity.groups || []).join(", ")}`,
+      `命名空间    : ${perm.namespace || "-"}`,
+      `集群级      : namespaces=${flag(cluster.namespaces)} nodes=${flag(cluster.nodes)} ` +
+        `storageclasses=${flag(cluster.storageclasses)} 全部命名空间=${flag(cluster.allNamespaces)}`,
+      "",
+      "资源权限    :",
+    ];
+    for (const kind of Object.keys(perm.kinds || {}).sort()) {
+      const entry = perm.kinds[kind] || {};
+      const log = entry.log === undefined ? "" : ` log=${flag(entry.log)}`;
+      lines.push(`  ${kind.padEnd(22)} list=${flag(entry.list)} mutate=${flag(entry.mutate)}${log}`);
+    }
+    if (perm.warnings && perm.warnings.length) lines.push("", "提示        : " + perm.warnings.join("；"));
+    return lines.join("\n");
+  }
+
+  // ---------------- detail / logs / events ----------------
+  function renderActions() {
+    const actions = $("actions");
+    actions.textContent = "";
+    if (!state.selected) return;
+    if (state.kind !== "pods") return;
+    const logs = document.createElement("button");
+    logs.className = "btn small"; logs.textContent = "查看日志"; logs.disabled = !canReadLogs();
+    logs.addEventListener("click", () => switchTab("logs")); actions.append(logs);
+  }
+
+  function switchTab(tab) {
+    state.tab = tab;
+    ++state.viewRevision;
+    drawer.open();
+    for (const button of document.querySelectorAll(".tab")) {
+      button.classList.toggle("active", button.dataset.tab === tab);
+    }
+    $("log-tools").classList.toggle("hidden", tab !== "logs");
+    if (tab !== "logs") stopLogs();
+    if (tab !== "monitor") monitor.stop();
+    if (!state.selected && tab !== "permissions") {
+      $("pane").textContent = "选中左侧一行查看详情";
+      return;
+    }
+    loadTab();
+  }
+
+  async function loadTab() {
+    const pane = $("pane");
+    pane.classList.toggle("hidden",state.tab==="monitor");$("monitor").classList.toggle("hidden",state.tab!=="monitor");
+    if(state.tab==="monitor") {if(state.selected?.kind==="pods")monitor.start({name:state.selected.name,namespace:state.selected.namespace});return;}
+    if (state.tab === "permissions") {
+      $("detail-title").textContent = "当前凭据权限";
+      $("actions").textContent = "";
+      if (!state.perm) await loadPermissions();
+      pane.textContent = `${formatPermissions()}\n\n规则明细\n${formatRules(state.perm)}`;
+      return;
+    }
+    if (!state.selected) return;
+    const selected = state.selected;
+    const { name, namespace, kind } = selected;
+    const revision = ++state.viewRevision;
+    const tab = state.tab;
+    pane.textContent = "加载中…";
+    try {
+      if (state.tab === "logs") {
+        await startLogs();
+        return;
+      }
+      if (state.tab === "events") {
+        const result = await invoke("kube/events", { ...baseParams(), name, namespace });
+        if (revision !== state.viewRevision || tab !== state.tab || selected !== state.selected) return;
+        const rows = result.rows || [];
+        pane.textContent = rows.length
+          ? rows.map((row) => `${row.age || ""}\t${row.status}\t${row.detail}`).join("\n")
+          : "该对象没有相关事件";
+        return;
+      }
+      const result = await invoke("kube/get", { ...baseParams(), name, namespace, kind });
+      if (revision !== state.viewRevision || tab !== state.tab || selected !== state.selected) return;
+      pane.textContent = result.json || "{}";
+      const object = JSON.parse(result.json || "{}");
+      const containers = [...(object.spec?.containers || []), ...(object.spec?.initContainers || [])];
+      $("log-container").replaceChildren(...containers.map((item) => { const option = document.createElement("option"); option.value = item.name; option.textContent = item.name; return option; }));
+    } catch (error) {
+      if (revision === state.viewRevision && tab === state.tab && selected === state.selected) pane.textContent = "加载失败：" + (error.message || error);
+    }
+  }
+
+  async function selectRow(row, keepTab = false) {
+    ++state.viewRevision;
+    monitor.stop();
+    state.selected = { ...row, kind: state.kind };
+    drawer.open();
+    $("detail-title").textContent = row.namespace ? `${row.namespace}/${row.name}` : row.name;
+    $("detail-title").dataset.tooltip=$("detail-title").textContent;
+    $("tab-monitor").disabled = state.kind !== "pods";
+    $("tab-logs").disabled = state.kind !== "pods" || !canReadLogs();
+    if (!keepTab) {
+      stopLogs();
+      state.tab = "detail";
+      for (const button of document.querySelectorAll(".tab")) {
+        button.classList.toggle("active", button.dataset.tab === "detail");
+      }
+      $("log-tools").classList.add("hidden");
+    }
+    renderRows();
+    renderActions();
+    await loadTab();
+  }
+
+  // ---------------- live logs ----------------
+  function renderLogs() {
+    $("pane").textContent = state.logLines.join("\n") || "（等待日志…）";
+    if ($("log-follow").checked) $("pane").scrollTop = $("pane").scrollHeight;
+  }
+
+  const normalizeLimit = (value) => Math.max(1, Math.min(5000, Math.floor(Number(value) || 100)));
+  async function startLogs() {
+    if (!state.selected || state.selected.kind !== "pods") return;
+    stopLogs();
+    const revision = ++state.logRevision;
+    const { name, namespace } = state.selected;
+    state.maxLogLines = normalizeLimit($("max-lines").value);
+    state.logLines = [];
+    const streamId = "log-" + crypto.randomUUID();
+    state.logStream = streamId; // Register before invoke: events may beat the response.
+    state.logLive = true;
+    $("log-pause").textContent = "暂停";
+    $("log-state").textContent = "连接中…";
+    renderLogs();
+    try {
+      await invoke("kube/logs/start", { name, namespace, streamId, tailLines: state.maxLogLines,
+        container: $("log-container").value, timestamps: $("log-timestamps").checked });
+      if (revision !== state.logRevision) { await invoke("kube/logs/stop", {streamId}); return; }
+      if (state.logStream === streamId) $("log-state").textContent = "实时跟随";
+    } catch (error) {
+      if (revision !== state.logRevision) return;
+      appendLogLines(["日志启动失败：" + (error.message || error)]);
+      state.logLive = false;
+      state.logStream = null;
+      $("log-state").textContent = "已停止";
+    }
+  }
+
+  async function stopLogs() {
+    ++state.logRevision;
+    const streamId = state.logStream;
+    state.logStream = null;
+    state.logLive = false;
+    $("log-state").textContent = "已停止";
+    $("log-pause").textContent = "继续";
+    if (streamId) try { await invoke("kube/logs/stop", { streamId }); } catch { /* closed */ }
+  }
+
+  function appendLogLines(lines) {
+    state.logLines.push(...lines);
+    const overflow = state.logLines.length - state.maxLogLines;
+    if (overflow > 0) state.logLines.splice(0, overflow);
+    const pane = $("pane");
+    pane.textContent = state.logLines.join("\n");
+    if ($("log-follow").checked) pane.scrollTop = pane.scrollHeight;
+  }
+
+  // Terminal tabs keep private context snapshots and independent PTYs.
+  const terminals = new Map(), activeTerminalIds = new Map();
+  const activeTerminal = () => terminals.get(activeTerminalIds.get(state.contextName));
+  function syncTerminalPanel() {
+    const active=activeTerminal();state.termStream=active?.streamId||null;
+    for(const entry of terminals.values())entry.element.classList.toggle("hidden",entry!==active);
+    $("term-context").textContent=state.contextName;
+    $("terminal").classList.toggle("hidden",!active?.visible);
+    const tabs=[];
+    for(const entry of terminals.values()) {
+      if(entry.context!==state.contextName)continue;
+      const tab=document.createElement("div");tab.className="term-tab";tab.setAttribute("role","tab");tab.setAttribute("aria-selected",String(entry===active));
+      const label=document.createElement("button");label.className="term-tab-label";label.textContent=entry.label+(entry.ended?" · 已退出":"");label.dataset.tooltip=entry.label;
+      label.onclick=()=>{activeTerminalIds.set(entry.context,entry.id);entry.visible=true;syncTerminalPanel();entry.terminal.focus();};
+      const close=document.createElement("button");close.className="term-tab-close";close.textContent="×";close.setAttribute("aria-label","关闭终端 "+entry.label);close.onclick=()=>closeTerminal(entry);
+      tab.append(label,close);tabs.push(tab);
+    }
+    $("terminal-tabs").replaceChildren(...tabs);
+    if(active?.visible)fitTerminal(active);
+  }
+  function fitTerminal(entry) {
+    if(entry!==activeTerminal()||!entry.visible||$("terminal").classList.contains("hidden"))return;
+    entry.fit.fit();
+    if(entry.streamId)invoke("terminal/resize",{context:entry.context,streamId:entry.streamId,cols:entry.terminal.cols,rows:entry.terminal.rows}).catch(()=>{});
+  }
+  function createTerminal(options={}) {
+    const element=document.createElement("div");element.className="term-session";$("term-screen").append(element);
+    const terminal=new window.Terminal({cursorBlink:true,scrollback:2000,fontSize:12,fontFamily:"Menlo, monospace",theme:{background:"#171b23",foreground:"#d7dce5",cursor:"#72a5ff"}});
+    const fit=new window.FitAddon.FitAddon();terminal.loadAddon(fit);terminal.open(element);
+    const localCount=[...terminals.values()].filter(e=>e.context===state.contextName&&!e.options.pod).length;
+    const entry={id:crypto.randomUUID(),context:state.contextName,options,label:options.pod?options.namespace+"/"+options.pod+":"+options.container:"本地 "+(localCount+1),terminal,fit,element,streamId:null,starting:null,inputChain:Promise.resolve(),visible:true};
+    terminals.set(entry.id,entry);activeTerminalIds.set(entry.context,entry.id);
+    terminal.onData(data=>{const streamId=entry.streamId;if(!streamId)return;entry.inputChain=entry.inputChain.then(()=>invoke("terminal/input",{context:entry.context,streamId,data})).catch(error=>terminal.writeln("\r\n"+error.message));});
+    entry.observer=new ResizeObserver(()=>fitTerminal(entry));entry.observer.observe(element);return entry;
+  }
+  async function startTerminal(options=null, forceNew=false) {
+    if(!state.contextName||state.switchingContext)return;
+    const entry=forceNew||options?createTerminal(options||{}):activeTerminal()||createTerminal();
+    entry.visible=true;syncTerminalPanel();
+    if(entry.starting)return entry.starting;
+    if(entry.streamId){entry.terminal.focus();return;}
+    entry.starting=(async()=>{
+      fitTerminal(entry);const streamId="term-"+crypto.randomUUID();entry.streamId=streamId;entry.ended=false;
+      if(entry.context===state.contextName)state.termStream=streamId;
+      try {
+        await invoke("terminal/start",{context:entry.context,streamId,cols:entry.terminal.cols,rows:entry.terminal.rows,...entry.options});
+        if(entry===activeTerminal()&&entry.visible)entry.terminal.focus();
+      } catch(error) {if(entry.streamId===streamId)entry.streamId=null;entry.ended=true;entry.terminal.writeln("\r\n"+error.message);}
+      syncTerminalPanel();
+    })();
+    try{await entry.starting;}finally{entry.starting=null;}
+    return entry;
+  }
+  async function stopTerminal(entry=activeTerminal()) {
+    if(!entry)return;if(entry.starting)await entry.starting;
+    const streamId=entry.streamId;entry.streamId=null;
+    if(entry===activeTerminal())state.termStream=null;
+    if(streamId)try{await invoke("terminal/stop",{context:entry.context,streamId});}catch{}
+  }
+  async function closeTerminal(entry) {
+    await stopTerminal(entry);entry.observer.disconnect();entry.terminal.dispose();entry.element.remove();terminals.delete(entry.id);
+    if(activeTerminalIds.get(entry.context)===entry.id) {
+      const next=[...terminals.values()].find(e=>e.context===entry.context);activeTerminalIds.set(entry.context,next?.id);
+    }syncTerminalPanel();
+  }
+  async function stopAllTerminals() {await Promise.all([...terminals.values()].map(stopTerminal));for(const entry of terminals.values()){entry.observer.disconnect();entry.terminal.dispose();entry.element.remove();}terminals.clear();activeTerminalIds.clear();state.termStream=null;}
+  function toggleTerminal(show) {const entry=activeTerminal();if(entry)entry.visible=show;$("terminal").classList.toggle("hidden",!show);if(show)startTerminal();}
+
+  let execTarget=null,execRevision=0,execPreviousFocus=null;
+  function closeExec() {++execRevision;execTarget=null;$("exec-dialog").classList.add("hidden");window.KubeControls.closeSelects();execPreviousFocus?.focus();}
+  async function enterPod(row) {
+    const revision=++execRevision,context=state.contextName;execPreviousFocus=document.activeElement;
+    try {
+      const result=await invoke("kube/get",{kind:"pods",name:row.name,namespace:row.namespace});
+      if(revision!==execRevision||context!==state.contextName)return;
+      const object=JSON.parse(result.json||"{}"),statuses=[...(object.status?.containerStatuses||[]),...(object.status?.initContainerStatuses||[]),...(object.status?.ephemeralContainerStatuses||[])];
+      const running=statuses.filter(item=>item.state?.running);
+      if(!running.length)throw new Error("当前没有运行中的容器，请刷新 Pod 状态");
+      execTarget={context,pod:row.name,namespace:row.namespace};
+      $("exec-title").textContent="进入 "+row.namespace+"/"+row.name;
+      $("exec-container").replaceChildren(...running.map(item=>{const option=document.createElement("option");option.value=option.textContent=item.name;return option;}));
+      $("exec-shell").value="/bin/sh";$("exec-dialog").classList.remove("hidden");
+      document.querySelector('[data-for="exec-container"] button')?.focus();
+    }catch(error){if(revision===execRevision&&context===state.contextName)showBanner(error.message||String(error),true);}
+  }
+  const monitor=window.KubeMonitor.create({root:$("monitor"),invoke:(method,params)=>invoke(method,params)});
+
+  // ---------------- import / merge ----------------
+  const MAX_KUBECONFIG_BYTES = 1024 * 1024;
+
+  async function importFile(file) {
+    if (!file) return;
+    if (file.size > MAX_KUBECONFIG_BYTES) {
+      showBanner("文件超过 1 MiB，请确认拖入的确实是 kubeconfig", true);
+      return;
+    }
+    let text = "";
+    try {
+      text = await file.text();
+    } catch (error) {
+      showBanner("读取文件失败：" + (error.message || error), true);
+      return;
+    }
+    showBanner("正在合并 " + file.name + " …");
+    try {
+      const result = await invoke("kube/merge", { connectionId: state.connectionId, kubeconfig: text, sourcePath: file.sourcePath });
+      showOverlay("dropzone", false);
+      const added = (result.added || []).length;
+      const replaced = (result.replaced || []).length;
+      showBanner(`已合并 ${file.name} → ${result.path}（新增 ${added}，覆盖 ${replaced}）。原文件已备份。`);
+      ++state.contextsRevision;
+      state.contexts = result.contexts || [];
+      state.currentContextName = result.current || state.currentContextName;
+      renderContexts();
+      $("ov-title").textContent = state.contexts.length + " 个 context";
+      $("kubeconfig-path").textContent = "kubeconfig: " + result.path;
+      $("kubeconfig-path").title = result.path;
+    } catch (error) {
+      showBanner(error.message || String(error), true);
+    }
+  }
+
+  async function pickImportFile() {
+    if (!dbx.capabilities?.fileTransfer?.pick || !dbx.capabilities?.fileTransfer?.read) {
+      $("file-input").click();
+      return;
+    }
+    try {
+      const { files = [] } = await dbx.fileTransfer.pick({ multiple: false });
+      if (files[0]) await importHandle(files[0]);
+      for (const file of files.slice(1)) await dbx.fileTransfer.cancel(file.handleId).catch(() => {});
+    } catch (error) { showBanner("选择文件失败：" + (error.message || error), true); }
+  }
+
+  function bindOverlay() {
+    const zone = $("dropzone");
+    const block = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    for (const type of ["dragenter", "dragover"]) {
+      window.addEventListener(type, (event) => {
+        if (!event.dataTransfer || !Array.from(event.dataTransfer.types || []).includes("Files")) return;
+        block(event);
+        showOverlay("dropzone", true);
+        zone.classList.add("active");
+      });
+    }
+    window.addEventListener("dragleave", (event) => {
+      if (event.relatedTarget) return;
+      zone.classList.remove("active");
+    });
+    window.addEventListener("drop", (event) => {
+      block(event);
+      zone.classList.remove("active");
+      const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+      if (file) importFile(file);
+    });
+    $("dz-pick").addEventListener("click", pickImportFile);
+    $("dz-close").addEventListener("click", () => {
+      zone.classList.remove("active");
+      showOverlay("dropzone", false);
+    });
+    zone.addEventListener("click", (event) => {
+      if (event.target === zone) {
+        zone.classList.remove("active");
+        showOverlay("dropzone", false);
+      }
+    });
+    $("file-input").addEventListener("change", (event) => {
+      const file = event.target.files && event.target.files[0];
+      event.target.value = "";
+      if (file) importFile(file);
+    });
+  }
+
+  async function importHandle(file) {
+    try {
+      if (file.size > MAX_KUBECONFIG_BYTES) throw new Error("文件超过 1 MiB");
+      const chunks = [];
+      let offset = 0;
+      for (;;) {
+        const chunk = await dbx.fileTransfer.read(file.handleId, offset, 65536);
+        const bytes = Uint8Array.from(atob(chunk.dataBase64), (value) => value.charCodeAt(0));
+        chunks.push(bytes); offset += bytes.length;
+        if (offset > MAX_KUBECONFIG_BYTES) throw new Error("文件超过 1 MiB");
+        if (chunk.eof) break;
+        if (!bytes.length) throw new Error("读取文件中断");
+      }
+      const blob = new Blob(chunks);
+      await importFile({name: file.name, size: blob.size, text: () => blob.text()});
+    } catch (error) { showBanner(error.message, true); }
+    finally { await dbx.fileTransfer.cancel(file.handleId).catch(() => {}); }
+  }
+
+  function bindHostEvents() {
+    if (!dbx.onEvent) return;
+    dbx.onEvent((event) => {
+      const params = (event && event.params) || {};
+      if (event.method === "kube/contextsChanged" && params.connectionId === state.connectionId) {
+        loadContexts().catch((error) => showBanner(error.message, true));
+      } else if (event.method === "kube/logChunk" && params.streamId === state.logStream) {
+        appendLogLines(params.lines || []);
+      } else if (event.method === "kube/logEnd" && (params.streamId === state.logStream || !state.logStream)) {
+        if (params.streamId === state.logStream) {
+          state.logLive = false;
+          state.logStream = null;
+          $("log-state").textContent = "已结束";
+          $("log-pause").textContent = "继续";
+        }
+      } else if (event.method === "kube/logError" && params.streamId === state.logStream) {
+        state.logLive = false;
+        state.logStream = null;
+        $("log-state").textContent = "错误";
+        appendLogLines(["错误：" + (params.message || "日志流中断")]);
+      } else if (event.method === "terminal/output") {
+        const entry = [...terminals.values()].find((item) => item.streamId === params.streamId);
+        entry?.terminal.write(params.data || "");
+      } else if (event.method === "terminal/exit") {
+        const entry = [...terminals.values()].find((item) => item.streamId === params.streamId);
+        if (entry) {
+          entry.ended=true;entry.terminal.writeln(`\r\n[退出码 ${params.code}]`);
+          entry.streamId = null;
+          if (entry === activeTerminal()) state.termStream = null;
+          syncTerminalPanel();
+        }
+      } else if (event.method === "kube/connectionChanged" && params.connectionId === state.connectionId && params.state === "disconnected") {
+        setStatus("连接已断开", "err");
+      }
+    });
+  }
+
+  async function boot() {
+    if (!dbx) {
+      setStatus("没有 DBX 宿主环境");
+      showBanner("这个页面需要在 DBX（或 dbx-plugin dev 调试宿主）中打开。", true);
+      return;
+    }
+    applyTheme(dbx.theme);
+    await dbx.ready;
+    applyTheme(dbx.theme);
+
+    const context = dbx.context || {};
+    state.connectionId = context.connectionId || state.connectionId;
+    state.contextName = context.contextName || "";
+    const initialContext = state.contextName;
+    state.contextName = "";
+
+    const kindSelect = $("kind");
+    for (const [value, label] of KINDS) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      kindSelect.append(option);
+    }
+    kindSelect.value = state.kind;
+
+    window.KubeControls.enhanceSelects();
+    window.KubeControls.bindTooltips();
+    let detailWidth;
+    if (dbx.capabilities?.storage) { try { detailWidth = await dbx.storage.get("detail-width"); } catch { /* default width */ } }
+    drawer = window.KubeControls.bindDrawer({pane: $("detail"), container: $("context-view"), handle: $("detail-resizer"), initialWidth: detailWidth,
+      save: (value) => dbx.capabilities?.storage ? dbx.storage.set("detail-width", value) : undefined});
+    bindOverlay();
+    bindHostEvents();
+    if (dbx.capabilities?.storage) {
+      try { state.maxLogLines = normalizeLimit(await dbx.storage.get("log-retention") || 100); $("max-lines").value = state.maxLogLines; } catch { /* default */ }
+    }
+    dbx.fileTransfer?.onDragState?.((active) => { if (active) showOverlay("dropzone", true); $("dropzone").classList.toggle("active", active); });
+    dbx.fileTransfer?.onDrop?.((files) => { if (files[0]) importHandle(files[0]); for (const file of files.slice(1)) dbx.fileTransfer.cancel(file.handleId).catch(() => {}); });
+    dbx.workbench?.onClose?.(async () => { monitor.stop();closeExec();await Promise.all([stopLogs(), stopAllTerminals()]); });
+    $("confirm-form").addEventListener("submit", (event) => { event.preventDefault(); settleDialog?.($("confirm-input").classList.contains("hidden") ? true : $("confirm-input").value); });
+    for (const id of ["confirm-cancel", "confirm-close"]) $(id).addEventListener("click", () => settleDialog?.(null));
+    $("confirm-dialog").addEventListener("click", (event) => { if (event.target === $("confirm-dialog")) settleDialog?.(null); });
+
+    $("context-select").addEventListener("change", () => enterContext($("context-select").value));
+    $("refresh").addEventListener("click", () => loadList());
+    $("ov-refresh").addEventListener("click", () => loadContexts().catch((error) => showBanner(error.message || String(error), true)));
+    $("ov-import").addEventListener("click", () => showOverlay("dropzone", true));
+    $("search").addEventListener("input", renderRows);
+    $("close-detail").addEventListener("click", () => {
+      state.selected = null;
+      ++state.viewRevision;
+      $("detail").classList.add("hidden");
+      stopLogs();monitor.stop();
+      $("pane").textContent = "选中左侧一行查看详情";
+      $("actions").textContent = "";
+      renderRows();
+    });
+    new ResizeObserver(() => { if (state.tab === "logs" && $("log-follow").checked) $("pane").scrollTop = $("pane").scrollHeight; }).observe($("pane"));
+    $("log-follow").addEventListener("change", () => { if ($("log-follow").checked) renderLogs(); });
+    $("log-clear").addEventListener("click", () => { state.logLines = []; renderLogs(); });
+    $("log-pause").addEventListener("click", () => state.logLive ? stopLogs() : startLogs());
+    $("log-container").addEventListener("change", () => startLogs());
+    $("log-timestamps").addEventListener("change", () => startLogs());
+    $("log-restart").addEventListener("click", () => startLogs());
+    $("max-lines").addEventListener("change", () => {
+      state.maxLogLines = normalizeLimit($("max-lines").value);
+      $("max-lines").value = state.maxLogLines;
+      if (dbx.capabilities?.storage) dbx.storage.set("log-retention", state.maxLogLines).catch(() => {});
+      if (state.logLines.length > state.maxLogLines) {
+        state.logLines.splice(0, state.logLines.length - state.maxLogLines);
+        renderLogs();
+      }
+    });
+    for (const button of document.querySelectorAll(".tab")) {
+      button.addEventListener("click", () => switchTab(button.dataset.tab));
+    }
+    kindSelect.addEventListener("change", () => {
+      state.kind = kindSelect.value;
+      state.rows = []; renderRows();
+      ++state.viewRevision;
+      $("detail").classList.add("hidden");
+      state.selected = null;
+      stopLogs();monitor.stop();
+      $("pane").textContent = "选中左侧一行查看详情";
+      $("actions").textContent = "";
+      loadList();
+    });
+    $("namespace").addEventListener("change", () => {
+      const value = $("namespace").value;
+      state.namespace = value;
+      state.rows = []; renderRows();
+      ++state.viewRevision;
+      $("detail").classList.add("hidden");
+      state.selected = null;
+      stopLogs();monitor.stop();
+      loadPermissions();
+      loadList();
+    });
+    $("terminal-btn").addEventListener("click", () => toggleTerminal($("terminal").classList.contains("hidden")));
+    $("term-close").addEventListener("click", () => toggleTerminal(false));
+    $("term-clear").addEventListener("click", () => activeTerminal()?.terminal.clear());
+    $("term-restart").addEventListener("click",async()=>{const entry=activeTerminal();if(!entry)return;await stopTerminal(entry);entry.terminal.reset();if(entry===activeTerminal())await startTerminal();});
+    $("term-new").addEventListener("click",()=>startTerminal(null,true));
+    $("exec-close").onclick=closeExec;$("exec-cancel").onclick=closeExec;
+    $("exec-dialog").onclick=event=>{if(event.target===$("exec-dialog"))closeExec();};
+    $("exec-form").onsubmit=event=>{event.preventDefault();if(!execTarget||execTarget.context!==state.contextName)return;const target={...execTarget,container:$("exec-container").value,shell:$("exec-shell").value};closeExec();startTerminal(target,true);};
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      if (!$("exec-dialog").classList.contains("hidden")) {closeExec();return;}
+      if (settleDialog) { settleDialog(null); return; }
+      showOverlay("dropzone", false);
+      $("dropzone").classList.remove("active");
+    });
+
+    if (!state.connectionId) {
+      setStatus("未选择连接");
+      showBanner("请从连接列表打开一个 KubeContext 连接。", true);
+      return;
+    }
+
+    await showOverviewMode();
+    if (initialContext && state.contexts.some((item) => item.name === initialContext)) await enterContext(initialContext);
+
+
+  }
+
+  boot();
+</script>
+</body>
+</html>
